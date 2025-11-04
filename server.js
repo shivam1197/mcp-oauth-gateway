@@ -3,10 +3,12 @@ import httpProxy from "http-proxy";
 import Provider from "oidc-provider";
 
 const app = express();
+app.set("trust proxy", true);
+
 const PORT = process.env.PORT || 3000;
 
-// === CONFIG ===
-const ISSUER_URL = process.env.ISSUER_URL;                    // e.g. https://<your-app>.up.railway.app/oidc
+// ---- CONFIG ----
+const ISSUER_URL = process.env.ISSUER_URL; // e.g. https://<your-app>.up.railway.app/oidc
 const UPSTREAM_ORIGIN = process.env.UPSTREAM_ORIGIN || "https://mcp.kite.trade";
 const UPSTREAM_PATH   = process.env.UPSTREAM_PATH   || "/mcp";
 
@@ -14,40 +16,38 @@ if (!ISSUER_URL) {
   console.error("ISSUER_URL not set");
 }
 
-// === 1) OAuth Authorization Server (with DCR + PKCE) ===
+// ---- 1) OAuth Authorization Server (with DCR; PKCE supported by default in v8) ----
 const oidc = new Provider(ISSUER_URL, {
-  // public clients using PKCE
   clientDefaults: {
+    // public clients using Authorization Code + PKCE
     token_endpoint_auth_method: "none",
     grant_types: ["authorization_code"],
     response_types: ["code"]
   },
   features: {
-    registration: { enabled: true },     // Dynamic Client Registration
-    pkce: { required: () => true, methods: ["S256"] }
+    // Dynamic Client Registration ON
+    registration: { enabled: true }
+    // (No pkce flag in v8 — removed)
   },
-  // use standard endpoint names
   routes: {
     authorization: "/authorize",
     token: "/token",
     jwks: "/jwks",
     registration: "/register"
   },
-  // super-minimal account handling: auto-login a stable account
+  // minimal account model; we auto-complete login & consent
   findAccount: (ctx, id) => ({
     accountId: id,
     async claims() { return { sub: id, email: "user@example.com" }; }
   }),
-  interactions: {
-    url: (ctx, interaction) => `/oidc/interaction/${interaction.uid}`
-  }
+  interactions: { url: (ctx, i) => `/oidc/interaction/${i.uid}` }
 });
 
-// auto-complete login & consent (no UI)
+// auto-complete interaction (no UI)
 app.get("/oidc/interaction/:uid", async (req, res, next) => {
   try {
-    const { prompt, uid } = await oidc.interactionDetails(req, res);
-    if (prompt.name === "login") {
+    const details = await oidc.interactionDetails(req, res);
+    if (details.prompt.name === "login") {
       await oidc.interactionFinished(
         req, res,
         { login: { accountId: "chatgpt-user", remember: true } },
@@ -55,17 +55,16 @@ app.get("/oidc/interaction/:uid", async (req, res, next) => {
       );
       return;
     }
-    if (prompt.name === "consent") {
+    if (details.prompt.name === "consent") {
       await oidc.interactionFinished(
-        req, res,
-        { consent: {} },
+        req, res, { consent: {} },
         { mergeWithLastSubmission: false }
       );
       return;
     }
-    return next();
+    next();
   } catch (e) {
-    console.error(e);
+    console.error("interaction error", e);
     res.status(500).send("interaction error");
   }
 });
@@ -73,7 +72,7 @@ app.get("/oidc/interaction/:uid", async (req, res, next) => {
 // mount issuer under /oidc
 app.use("/oidc", oidc.callback());
 
-// OPTIONAL: OAuth 2.1 discovery alias (ChatGPT may look here)
+// (Optional) explicit OAuth AS discovery alias
 app.get("/oidc/.well-known/oauth-authorization-server", (req, res) => {
   const base = ISSUER_URL.replace(/\/$/, "");
   res.json({
@@ -85,11 +84,11 @@ app.get("/oidc/.well-known/oauth-authorization-server", (req, res) => {
     response_types_supported: ["code"],
     grant_types_supported: ["authorization_code"],
     code_challenge_methods_supported: ["S256"],
-    token_endpoint_auth_methods_supported: ["none","client_secret_post","client_secret_basic"]
+    token_endpoint_auth_methods_supported: ["none", "client_secret_post", "client_secret_basic"]
   });
 });
 
-// === 2) OAuth Protected Resource Metadata for your /mcp endpoint ===
+// ---- 2) OAuth Protected Resource Metadata for your /mcp endpoint ----
 app.get("/.well-known/oauth-protected-resource/mcp", (req, res) => {
   if (!ISSUER_URL) return res.status(500).json({ error: "ISSUER_URL not set" });
   res.json({
@@ -99,19 +98,22 @@ app.get("/.well-known/oauth-protected-resource/mcp", (req, res) => {
   });
 });
 
-// === 3) Bearer challenge + proxy to Zerodha MCP ===
+// ---- 3) Bearer challenge + proxy to Zerodha MCP ----
 function requireBearer(req, res, next) {
   const auth = req.headers.authorization || "";
   if (!auth.startsWith("Bearer ")) {
     res.set("WWW-Authenticate", 'Bearer realm="mcp"');
     return res.sendStatus(401);
   }
-  // NOTE: since this AS issues the token, you could verify here using JWKS.
-  // For quick start we accept presence of a Bearer token. Add verification later.
+  // TODO: verify JWT from this issuer (JWKS) before accepting
   next();
 }
 
-const proxy = httpProxy.createProxyServer({ changeOrigin: true, secure: true, ignorePath: true });
+const proxy = httpProxy.createProxyServer({
+  changeOrigin: true,
+  secure: true,
+  ignorePath: true
+});
 
 app.all("/mcp", requireBearer, (req, res) => {
   proxy.web(req, res, { target: `${UPSTREAM_ORIGIN}${UPSTREAM_PATH}` }, (err) => {
