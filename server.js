@@ -69,9 +69,6 @@ app.get("/oidc/interaction/:uid", async (req, res, next) => {
   }
 });
 
-// mount issuer under /oidc
-app.use("/oidc", oidc.callback());
-
 // (Optional) explicit OAuth AS discovery alias
 app.get("/oidc/.well-known/oauth-authorization-server", (req, res) => {
   const base = ISSUER_URL.replace(/\/$/, "");
@@ -87,6 +84,9 @@ app.get("/oidc/.well-known/oauth-authorization-server", (req, res) => {
     token_endpoint_auth_methods_supported: ["none", "client_secret_post", "client_secret_basic"]
   });
 });
+
+// mount issuer under /oidc
+app.use("/oidc", oidc.callback());
 
 // ---- 2) OAuth Protected Resource Metadata for your /mcp endpoint ----
 app.get("/.well-known/oauth-protected-resource/mcp", (req, res) => {
