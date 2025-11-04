@@ -1,17 +1,12 @@
 {
   "name": "mcp-oauth-gateway",
-  "version": "1.0.0",
-  "description": "Minimal OAuth-aware MCP gateway server",
-  "main": "server.js",
-  "type": "commonjs",
+  "private": true,
+  "type": "module",
   "scripts": {
     "start": "node server.js"
   },
-  "keywords": [
-    "oauth",
-    "mcp",
-    "gateway"
-  ],
-  "author": "",
-  "license": "ISC"
+  "dependencies": {
+    "express": "^4.19.2",
+    "http-proxy": "^1.18.1"
+  }
 }
