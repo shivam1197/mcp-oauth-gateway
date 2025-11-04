@@ -23,11 +23,8 @@ const oidc = new Provider(ISSUER_URL, {
     response_types: ["code"]
   },
   features: {
-    registration: { enabled: true }      // Dynamic Client Registration
-  },
-  pkce: {
-    required: () => true,
-    methods: ["S256"]
+    registration: { enabled: true },     // Dynamic Client Registration
+    pkce: { required: () => true, methods: ["S256"] }
   },
   // use standard endpoint names
   routes: {
